@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+import scipy
 from torchvision import datasets, models
 
 shapes = [
@@ -50,19 +51,25 @@ class dataset_parser(Dataset):
         return len(self.file_list)
 
     def __getitem__(self, idx):
-
         ## TODO Need to index current image from the file list
+        image_path = self.file_list[idx]
+        try:
+            image = Image.open(os.path.join(self.root_dir, image_path))
+        except:
+            raise Exception(f"Error loading image: {image_path}")
         
         image = image.filter(ImageFilter.GaussianBlur(radius = 15))
 
         ## TODO Extract labels from the filename
+        filename_split = image_path.split("_")
+        shape_label, color_label, symbol_label = filename_split[1], filename_split[2], filename_split[3]
 
         shape_index = self.shapes.index(shape_label)
         color_index = list(self.colors_dict.keys()).index(color_label)
         symbol_index = self.symbols.index(symbol_label)
 
         # TODO create a tensor for labels to be returned from this function
-
+        label = torch.tensor([shape_index, color_index, symbol_index], dtype=torch.long)
         if self.transform:
             image = self.transform(image)
 
@@ -76,7 +83,7 @@ transform = transforms.Compose([
 
 training_data_path = '.data/training_images'
 dataset = dataset_parser(root_dir=training_data_path, shapes=shapes, colors_dict=colors_dict, symbols=symbols, transform=transform)
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=0)
 #pdb.set_trace()
 
 
@@ -116,18 +123,18 @@ class resnet18_custom(nn.Module):
 
         ## TODO create create NNs for each of the features we want to classify
 
-        self.fc_shape = ####
-        self.fc_color = ####
-        self.fc_symbol = ####
+        self.fc_shape = nn.Linear(512, num_shapes)
+        self.fc_color = nn.Linear(512, num_colors)
+        self.fc_symbol = nn.Linear(512, num_symbols)
 
     def forward(self, x):
         x = self.features(x)
         x = x.view(x.size(0), -1)
 
         ## TODO get outputs from NNs
-        shape_out = ####
-        color_out = ####
-        symbol_out = ####
+        shape_out = self.fc_shape(x)
+        color_out = self.fc_color(x)
+        symbol_out = self.fc_symbol(x)
         return shape_out, color_out, symbol_out
 
 
@@ -137,7 +144,7 @@ num_colors = len(colors_dict) # 8
 num_symbols = len(symbols) # 36
 
 #model = CustomModel(num_shapes, num_colors, num_symbols)
-model = resnet18_custom(num_shapes, num_colors, num_symbols).to('cuda')
+model = resnet18_custom(num_shapes, num_colors, num_symbols).to('cpu')
 
 
 criterion = nn.CrossEntropyLoss()
@@ -153,12 +160,12 @@ test_size = total_size - train_size - val_size
 
 # split into train, val, tset 
 
-train_dataset, val_dataset, test_dataset = ## TODO create training split
-train_dataloader = ## TODO Create Dataloader
-val_dataloader = ## TODO Create Dataloader
+train_dataset, val_dataset, test_dataset = random_split(dataset,  [train_size, val_size, test_size])
+train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True) ## TODO Create Dataloader
+val_dataloader = DataLoader(val_dataset, batch_size=32, shuffle=True) ## TODO Create Dataloader
 
 # for small testing: 
-test_dataloader = ## TODO Create Dataloader
+test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=True) ## TODO Create Dataloader
 
 
 
@@ -171,11 +178,13 @@ for epoch in range(num_epochs):
     for images, labels in train_dataloader:
         optimizer.zero_grad()
 
-        images, labels = images.to('cuda'), labels.to('cuda')
+        images, labels = images.to('cpu'), labels.to('cpu')
         shape_pred, color_pred, symbol_pred = model(images)
-        loss_shape = ##Calculate loss with criterion
-        loss_color = ##Calculate loss with criterion
-        loss_symbol = ##Calculate loss with criterion
+        shape_gt, color_gt, symbol_gt = labels[:, 0], labels[:, 1], labels[:, 2]
+
+        loss_shape = criterion(shape_pred, shape_gt) ##Calculate loss with criterion
+        loss_color = criterion(color_pred, color_gt) ##Calculate loss with criterion
+        loss_symbol = criterion(symbol_pred, symbol_gt) ##Calculate loss with criterion
         total_loss = loss_shape + loss_color + loss_symbol
         total_loss.backward()
         optimizer.step()
@@ -185,7 +194,7 @@ for epoch in range(num_epochs):
     with torch.no_grad():
         val_loss = 0.0
         for images, labels in val_dataloader:
-            images, labels = images.to('cuda'), labels.to('cuda')
+            images, labels = images.to('cpu'), labels.to('cpu')
             shape_pred, color_pred, symbol_pred = model(images)
             loss_shape = criterion(shape_pred, labels[:, 0])
             loss_color = criterion(color_pred, labels[:, 1])
@@ -209,9 +218,10 @@ total_samples = 0
 
 with torch.no_grad():
     for images, labels in test_dataloader:
-        images, labels = images.to('cuda'), labels.to('cuda')
+        images, labels = images.to('cpu'), labels.to('cpu')
 
         ## TODO run the model to get predictions
+        shape_pred, color_pred, symbol_pred = model(images)
 
         _, shape_predicted = torch.max(shape_pred, 1)
         _, color_predicted = torch.max(color_pred, 1)
